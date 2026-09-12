@@ -10,3 +10,23 @@ Cualquier cambio de alcance, arquitectura o criterios de aceptación se anota ah
 - Secretos: `.env` nunca se commitea y sus valores nunca se imprimen en output, logs ni tests.
 - Verificar conexión a Supabase: `.venv/bin/python -m scripts.verify_supabase`
 - Commits: uno por paso de §13, prefijados con el número (`Step 3: ...`), para que el avance sea legible desde `git log`.
+
+## Flujo con agentes
+
+- Cada paso de §13 va en su rama `step-N-slug` y entra a `main` por PR con merge **squash**, titulado `Step N: ...`. Así `main` conserva un commit por paso. `main` es producción: Render la despliega.
+- **Ejecutor**: Claude en `wp-sentinel/`. Crea la rama, implementa y abre el PR. No mergea sin OK del usuario.
+- **Auditor**: Claude en `../wp-sentinel-audit/` (worktree), siempre en sesión nueva, vía `/audit-spec <PR>`. Solo comenta en el PR; nunca edita.
+- Los agentes no se comunican entre sí: el código viaja por git, los hallazgos por comentarios del PR y el usuario da la señal.
+- No implementar el paso N+1 hasta que el PR del paso N esté mergeado (§13).
+
+## Setup en máquina nueva
+
+1. `.env`: lo crea el usuario a mano (nunca por chat ni por git).
+2. `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
+3. Worktree del auditor, una vez por máquina:
+   ```
+   git worktree add --detach ../wp-sentinel-audit origin/main
+   cd ../wp-sentinel-audit
+   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+   cp ../wp-sentinel/.env .env
+   ```
