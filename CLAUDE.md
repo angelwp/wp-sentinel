@@ -7,3 +7,6 @@ Cualquier cambio de alcance, arquitectura o criterios de aceptación se anota ah
 - `knowledge/` — corpus de conocimiento operativo (seguridad WordPress / hosting compartido) que se carga completo al `system` prompt. No editar sin revisar §12 del spec (reglas de contenido: cero dominios reales, IPs, credenciales o material identificable de clientes).
 - Antes de implementar cualquier paso, revisar §13 del spec (orden de trabajo) y no saltarse pasos.
 - No-objetivos (§2) son definitivos para esta versión: no agregar login, RAG, panel admin, etc. sin que el usuario cambie el spec primero.
+- Secretos: `.env` nunca se commitea y sus valores nunca se imprimen en output, logs ni tests.
+- Verificar conexión a Supabase: `.venv/bin/python -m scripts.verify_supabase`
+- Commits: uno por paso de §13, prefijados con el número (`Step 3: ...`), para que el avance sea legible desde `git log`.
