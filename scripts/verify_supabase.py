@@ -5,6 +5,8 @@ y borra ambas filas al terminar para no dejar datos de prueba en producción.
 
 Uso: python -m scripts.verify_supabase
 """
+import uuid
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -15,12 +17,13 @@ from app.db import get_supabase  # noqa: E402
 def main() -> None:
     db = get_supabase()
 
+    session_id = str(uuid.uuid4())
     session = (
         db.table("sessions")
-        .insert({"ip_hash": "verify-script-test-hash"})
+        .insert({"id": session_id, "ip_hash": "verify-script-test-hash"})
         .execute()
     )
-    session_id = session.data[0]["id"]
+    assert session.data[0]["id"] == session_id
     print(f"sessions: insertada id={session_id}")
 
     message = (
