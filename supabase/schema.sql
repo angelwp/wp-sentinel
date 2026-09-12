@@ -25,3 +25,8 @@ create index if not exists idx_sessions_ip_hash_created_at
 
 create index if not exists idx_messages_created_at
   on messages (created_at);
+
+-- RLS activado sin políticas bloquea incluso a service_role sin estos grants.
+grant select, insert, update, delete on public.sessions to service_role;
+grant select, insert, update, delete on public.messages to service_role;
+grant usage, select on all sequences in schema public to service_role;
