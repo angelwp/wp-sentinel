@@ -1,0 +1,29 @@
+# Blueprint de Render — despliegue mínimo (docs/SPEC.md §13 paso 3).
+# Solo declara lo necesario para arrancar /health. Las variables de los pasos
+# posteriores (ANTHROPIC_API_KEY, IP_HASH_SALT, DAILY_BUDGET_USD) se agregan
+# en su paso, no antes.
+#
+# NO APLICADO. El servicio actual se creó a mano en el panel y no lee este
+# archivo. Antes de usarlo como Blueprint, /health debe dejar de depender de
+# Supabase al importar (app/main.py); si no, healthCheckPath tumba el deploy
+# ante cualquier falla de credenciales (SPEC §5).
+
+services:
+  - type: web
+    name: wp-sentinel
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+      - key: ENVIRONMENT
+        value: production
+      # sync: false — el valor se captura en el panel de Render, nunca en el repo (§11).
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
