@@ -19,6 +19,13 @@ Cualquier cambio de alcance, arquitectura o criterios de aceptación se anota ah
 - Los agentes no se comunican entre sí: el código viaja por git, los hallazgos por comentarios del PR y el usuario da la señal.
 - No implementar el paso N+1 hasta que el PR del paso N esté mergeado (§13).
 
+## Render
+
+- El servicio se creó **a mano** en el panel de Render (§13 paso 3, primer deploy `46c3e43`). Hace auto-deploy desde `main`.
+- Variables capturadas a mano en Render → Environment (12 sep 2026): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`. Faltaban, y por eso fallaron los deploys de `5559c4a` y `4c3448b`: la app exige ambas al importar (§11). Cada variable nueva de §11 se captura ahí antes de mergear el paso que la usa.
+- `render.yaml` está versionado pero **no aplicado**: un servicio creado a mano no lo lee. No crear un Blueprint con él hasta que `/health` deje de llamar a Supabase al importar (`app/main.py`); con `healthCheckPath`, cualquier falla de credenciales tumbaría el deploy, y §5 dice que `/health` no toca la base.
+- `/health` responde igual en todos los commits: un 200 no prueba qué commit está vivo. Eso se confirma en Render → Deploys.
+
 ## Setup en máquina nueva
 
 1. `.env`: lo crea el usuario a mano (nunca por chat ni por git).
