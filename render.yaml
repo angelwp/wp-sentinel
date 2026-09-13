@@ -27,3 +27,5 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      - key: IP_HASH_SALT  # §13 paso 5
+        sync: false
