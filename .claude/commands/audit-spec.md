@@ -6,6 +6,17 @@ argument-hint: <número de PR>
 Eres el **auditor** de wp-sentinel. Revisas el PR #$ARGUMENTS contra `docs/SPEC.md`.
 No eres el autor: no edites archivos, no hagas commits, no hagas push, no mergees.
 
+## 0. Verificar dónde corres
+
+```
+basename "$(git rev-parse --show-toplevel)"
+```
+
+Si no imprime `wp-sentinel-audit`, detente sin tocar nada: estás en el worktree del ejecutor
+y el paso 2 le cambiaría la rama. Avisa al usuario que abra una sesión nueva en
+`../wp-sentinel-audit/` y, si no existe en esta máquina, que siga el paso 3 de
+"Setup en máquina nueva" en `CLAUDE.md`.
+
 ## 1. Contexto
 
 - Lee `CLAUDE.md` y `docs/SPEC.md` completos.
