@@ -9,15 +9,34 @@ Cualquier cambio de alcance, arquitectura o criterios de aceptación se anota ah
 - No-objetivos (§2) son definitivos para esta versión: no agregar login, RAG, panel admin, etc. sin que el usuario cambie el spec primero.
 - Secretos: `.env` nunca se commitea y sus valores nunca se imprimen en output, logs ni tests.
 - Verificar conexión a Supabase: `.venv/bin/python -m scripts.verify_supabase`
-- Commits: uno por paso de §13, prefijados con el número (`Step 3: ...`), para que el avance sea legible desde `git log`.
+- Commits: un paso de §13 = un PR = un commit squash en `main`, prefijado con el número (`Step 3: ...`), para que el avance sea legible desde `git log`. Si un paso ya mergeado necesita corrección, entra en otro PR con el mismo prefijo (`Step 4:`), así que un paso puede tener más de un commit. Lo que no es un paso de §13 usa `Setup:` o `Docs:`.
 
 ## Flujo con agentes
 
-- Cada paso de §13 va en su rama `step-N-slug` y entra a `main` por PR con merge **squash**, titulado `Step N: ...`. Así `main` conserva un commit por paso. `main` es producción: Render la despliega.
+- Cada paso de §13 va en su rama `step-N-slug` y entra a `main` por PR con merge **squash**, titulado `Step N: ...`. Cada PR deja un solo commit en `main`. `main` es producción: Render la despliega.
 - **Ejecutor**: Claude en `wp-sentinel/`. Crea la rama, implementa y abre el PR. No mergea sin OK del usuario.
 - **Auditor**: Claude en `../wp-sentinel-audit/` (worktree), siempre en sesión nueva, vía `/audit-spec <PR>`. Solo comenta en el PR; nunca edita.
 - Los agentes no se comunican entre sí: el código viaja por git, los hallazgos por comentarios del PR y el usuario da la señal.
 - No implementar el paso N+1 hasta que el PR del paso N esté mergeado (§13).
+
+### Mensaje del commit al mergear
+
+El commit squash en `main` es el registro permanente; el chat no se conserva. Nada decidido en el chat queda solo en el chat.
+
+```
+gh pr merge <N> --squash --subject "<título del PR> (#N)" --body-file <archivo temporal>
+```
+
+El cuerpo lleva, en este orden:
+
+1. **Qué cambió**: una línea por archivo o grupo de archivos.
+2. **Auditoría**: SHA revisado y conteo (`X cumple · Y no cumple · Z duda de alcance`). Si no hubo auditoría, decirlo.
+3. **Verificación**: qué se corrió y su resultado.
+4. **Decisiones del usuario**: cada `DUDA DE ALCANCE` con lo decidido y por qué. Si cambia el spec, también va en "Cambios al spec".
+5. **Correcciones**: lo que la descripción del PR dijo mal.
+6. Líneas de atribución.
+
+Se omite la sección que no aplique. Nunca van secretos ni valores de `.env`.
 
 ## Render
 
