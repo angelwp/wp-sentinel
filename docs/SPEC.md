@@ -267,3 +267,14 @@ presupuesto diario global (§6), logging estructurado (§7.2), manejo de
 secretos en producción (§11), columna `truncated` en `messages` (§4.2).
 Se cambió `corpus_tokens` por `corpus_chars` en `/health` (§5) y se movió el
 despliegue en Render del final al paso 3 (§13).
+
+**12 sep 2026 — §4.2, permisos.** Sin cambio de versión: no cambia tablas,
+columnas ni comportamiento. §4.2 describe solo la estructura de las tablas. El
+esquema aplicado (`supabase/schema.sql`) además otorga a `service_role`
+`select, insert, update, delete` sobre `sessions` y `messages`, y
+`usage, select` sobre sus secuencias. Motivo: la app usa la clave de servicio,
+que entra como `service_role`. Ese rol ignora RLS, pero Postgres igual exige
+permisos sobre cada tabla, y el proyecto no los otorgó solo. Sin ellos,
+cualquier lectura o escritura falla con `42501 permission denied`. Se detectó
+en el paso 4 al correr `scripts/verify_supabase.py` (`4c3448b`). La auditoría
+del PR #1 lo señaló como duda de alcance y el usuario decidió conservarlos.
