@@ -1,3 +1,5 @@
+import logging
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -11,10 +13,25 @@ from app.sessions import (  # noqa: E402
     MESSAGES_PER_SESSION,
     SESSIONS_PER_IP,
     client_ip,
-    count_recent_sessions,
-    create_session,
+    create_session_if_allowed,
     hash_ip,
 )
+
+
+class _HideClientAddr(logging.Filter):
+    """Quita la IP del access log de uvicorn, que la pone como primer argumento.
+
+    La IP nunca va en claro a los logs (SPEC §6). Va en código y no como
+    --no-access-log porque el start command de Render se capturó a mano.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and record.args:
+            record.args = ("-", *record.args[1:])
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_HideClientAddr())
 
 app = FastAPI()
 
@@ -33,10 +50,10 @@ def health() -> dict:
 
 @app.post("/api/session", status_code=201)
 def new_session(request: Request):
-    db = get_supabase()
     ip_hash = hash_ip(client_ip(request), get_settings().ip_hash_salt)
+    session_id = create_session_if_allowed(get_supabase(), ip_hash)
 
-    if count_recent_sessions(db, ip_hash) >= SESSIONS_PER_IP:
+    if session_id is None:
         return JSONResponse(
             status_code=429,
             content={
@@ -49,5 +66,4 @@ def new_session(request: Request):
             },
         )
 
-    session_id = create_session(db, ip_hash)
     return {"session_id": session_id, "messages_remaining": MESSAGES_PER_SESSION}

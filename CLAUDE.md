@@ -25,6 +25,7 @@ Cualquier cambio de alcance, arquitectura o criterios de aceptación se anota ah
 - Variables capturadas a mano en Render → Environment (12 sep 2026): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`. Faltaban, y por eso fallaron los deploys de `5559c4a` y `4c3448b`: la app exige ambas al importar (§11). Cada variable nueva de §11 se captura ahí antes de mergear el paso que la usa.
 - `render.yaml` está versionado pero **no aplicado**: un servicio creado a mano no lo lee. No crear un Blueprint con él hasta que `/health` deje de llamar a Supabase al importar (`app/main.py`); con `healthCheckPath`, cualquier falla de credenciales tumbaría el deploy, y §5 dice que `/health` no toca la base.
 - `/health` responde igual en todos los commits: un 200 no prueba qué commit está vivo. Eso se confirma en Render → Deploys.
+- **Una instancia, un worker de uvicorn.** El lock de `app/sessions.py`, que evita pasar el límite de sesiones por IP con peticiones simultáneas, solo protege dentro de un proceso. Antes de subir instancias en Render o agregar `--workers`, mover ese conteo a Postgres. Durante un deploy conviven unos segundos la instancia vieja y la nueva; se acepta.
 
 ## Setup en máquina nueva
 
