@@ -2,7 +2,7 @@
 -- Ejecutar en el SQL editor de Supabase.
 
 create table if not exists sessions (
-  id            uuid primary key default gen_random_uuid(),
+  id            uuid primary key,
   ip_hash       text not null,
   created_at    timestamptz not null default now(),
   message_count int  not null default 0,
