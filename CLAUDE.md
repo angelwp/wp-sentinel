@@ -38,7 +38,7 @@ Cualquier cambio de alcance, arquitectura o criterios de aceptación se anota ah
    cp ../wp-sentinel/.env .env
    cp .claude/auditor-settings.json .claude/settings.local.json
    ```
-   El último `cp` bloquea en ese directorio, a nivel de Claude Code, editar, commitear, pushear y mergear. "El auditor nunca edita" deja de depender solo de la instrucción. `settings.local.json` está en `.gitignore`, así que no ensucia el `git status` que revisa `/audit-spec`.
+   El último `cp` agrega una **segunda capa**, no un sandbox. En ese directorio, Claude Code niega las herramientas `Edit` y `Write`, y los comandos de la lista `deny` de `.claude/auditor-settings.json`: commits, push, merge, cambios de archivos con git y `gh api`, entre otros. No bloquea toda escritura posible: un redirect de shell (`>`) o un comando que no esté en la lista todavía podría escribir. La primera capa sigue siendo la instrucción "el auditor nunca edita". `settings.local.json` está en `.gitignore`, así que no ensucia el `git status` que revisa `/audit-spec`. Si el auditor necesita un comando nuevo, se ajusta la plantilla por PR.
 
 ## Seguimiento y retomar trabajo
 
@@ -49,7 +49,7 @@ El chat no se conserva. Todo el contexto para seguir, desde cualquier máquina o
 | Qué se construye | `docs/SPEC.md` |
 | Cómo se trabaja | este archivo |
 | Qué está en curso y qué falta | PRs abiertos: descripción + último comentario `## Estado` |
-| Qué se decidió y por qué | cuerpo de los commits squash en `main` |
+| Qué se decidió y por qué | Si cambia alcance, arquitectura o criterios de aceptación: "Cambios al spec" en `docs/SPEC.md`. Todo lo demás, y el registro de cada merge: cuerpo de los commits squash en `main` |
 
 - **Al retomar:** `git fetch`, `gh pr list` y leer el último comentario `## Estado` de cada PR abierto. Si no hay PRs abiertos, el siguiente paso es el primero de §13 que no esté en `git log main`.
 - **Al pausar:** el ejecutor deja en cada PR abierto un comentario `## Estado — <fecha>` con los pendientes en orden, cada uno con su responsable (usuario, ejecutor o auditor). Nunca secretos.
