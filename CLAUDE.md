@@ -20,6 +20,10 @@ Cualquier cambio de alcance, arquitectura o criterios de aceptación se anota ah
 - Los agentes no se comunican entre sí: el código viaja por git, los hallazgos por comentarios del PR o issues, y el usuario da la señal.
 - No implementar el paso N+1 hasta que el PR del paso N esté mergeado (§13).
 
+### Retroalimentación del ejecutor al auditor
+
+Tras corregir los hallazgos de una auditoría, el ejecutor comenta en el PR (no edita el reporte del auditor) una tabla `Hallazgo → Qué se hizo` antes de pedir re-auditoría. Si el ejecutor no está de acuerdo con un hallazgo, lo dice ahí — con su razón — en vez de ignorarlo en silencio. Cierra el ciclo: el auditor no tiene forma de saber si su comentario se leyó hasta que ve un commit nuevo o esta respuesta.
+
 ### Mensaje del commit al mergear
 
 El commit squash en `main` es el registro permanente; el chat no se conserva. Nada decidido en el chat queda solo en el chat.
