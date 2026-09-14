@@ -16,7 +16,8 @@ Cualquier cambio de alcance, arquitectura o criterios de aceptación se anota ah
 - Cada paso de §13 va en su rama `step-N-slug` y entra a `main` por PR con merge **squash**, titulado `Step N: ...`. Cada PR deja un solo commit en `main`. `main` es producción: Render la despliega.
 - **Ejecutor**: Claude en `wp-sentinel/`. Crea la rama, implementa y abre el PR. No mergea sin OK del usuario.
 - **Auditor**: Claude en `../wp-sentinel-audit/` (worktree), siempre en sesión nueva, vía `/audit-spec <PR>`. Solo comenta en el PR; nunca edita.
-- Los agentes no se comunican entre sí: el código viaja por git, los hallazgos por comentarios del PR y el usuario da la señal.
+- **Revisor del spec**: Claude en `../wp-sentinel-audit/`, en sesión nueva, vía `/review-spec`. Revisa la calidad de `docs/SPEC.md` contra `main` (ambigüedades, huecos, inconsistencias) y abre un issue; nunca edita. Se corre antes de empezar un paso cuando las auditorías acumulan dudas de alcance. Lo que el usuario acepte entra por un PR `Docs:` a "Cambios al spec".
+- Los agentes no se comunican entre sí: el código viaja por git, los hallazgos por comentarios del PR o issues, y el usuario da la señal.
 - No implementar el paso N+1 hasta que el PR del paso N esté mergeado (§13).
 
 ### Mensaje del commit al mergear
