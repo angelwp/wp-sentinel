@@ -281,3 +281,68 @@ permisos sobre cada tabla, y el proyecto no los otorgó solo. Sin ellos,
 cualquier lectura o escritura falla con `42501 permission denied`. Se detectó
 en el paso 4 al correr `scripts/verify_supabase.py` (`4c3448b`). La auditoría
 del PR #1 lo señaló como duda de alcance y el usuario decidió conservarlos.
+
+**14 sep 2026 — §5, §6, §7.1: `POST /api/chat` antes del proveedor.** Sin cambio
+de versión: define lo que el spec dejaba abierto y no contradice ninguna
+sección. Motivo: la revisión del spec (issue #8, hallazgos 1 a 4) marcó estos
+puntos como bloqueantes para el paso 6. El usuario aceptó las propuestas.
+
+1. **Respuesta sin streaming (§13 paso 6).** `POST /api/chat` responde 200 con
+   `{"text":"<respuesta completa>","messages_remaining":<int>,"tokens_used":<int>}`.
+   Es el texto que en SSE iría repartido en los `delta`, más los campos de
+   `done`. En el paso 7 esta respuesta se reemplaza por el SSE de §5.
+2. **Errores antes de llamar al proveedor.** Responden con su status HTTP y cuerpo
+   JSON `{"code":"<string>","message":"<texto para el usuario>"}`, igual que
+   `POST /api/session`. Aplica a `message_too_long`, `session_limit`,
+   `budget_exceeded` y a los códigos del punto 3. `event: error` solo se usa
+   con el stream ya abierto.
+3. **Validación de la petición.**
+   - 422 `invalid_request`: el cuerpo no es JSON válido, falta `session_id` o
+     `message`, `session_id` no es un UUID, o `message` está vacío.
+   - 422 `message_too_long`: `message` de más de 2000 caracteres (§6).
+   - 404 `session_not_found`: `session_id` es un UUID válido pero no existe.
+   - Orden: primero se valida el cuerpo y después se busca la sesión. Así la
+     prueba 3 de §10 no depende de que exista una sesión en la base.
+4. **Qué cuenta como mensaje (límite de 10, §6).** Cuenta cada mensaje del
+   usuario cuya respuesta se persistió, completa o con `truncated = true`. Un
+   intento que termina en error sin respuesta persistida no consume cupo.
+   `sessions.message_count` y `sessions.total_tokens` se actualizan al persistir
+   la respuesta. `messages_remaining = 10 − message_count`. Si `message_count`
+   ya es 10, responde 429 `session_limit` sin llamar al proveedor. Qué tokens
+   se suman lo define la entrada siguiente, punto 1.
+
+**14 sep 2026 — §6, §7, §8, §11: costo, concurrencia, reintentos, variables y
+guardrails.** Sin cambio de versión, por el mismo motivo que la entrada
+anterior. Motivo: los hallazgos 5, 7, 8, 13 y 16 del issue #8 afectan el paso 6.
+El usuario aceptó las recomendaciones del ejecutor.
+
+1. **Tokens y presupuesto (§4.2, §5, §6, §7.2).** `tokens_in` es la suma de los
+   tres conteos de entrada que reporta la API: `input_tokens`,
+   `cache_creation_input_tokens` y `cache_read_input_tokens`. `tokens_in` y
+   `tokens_out` se guardan en la fila `assistant` de `messages`; la fila `user`
+   los deja en `null`. `tokens_used` y lo que se suma a `sessions.total_tokens`
+   es `tokens_in + tokens_out` de esa llamada. El gasto de §6 cobra toda la
+   entrada al precio de escritura en caché del modelo y la salida a su precio de
+   salida. Es una cota superior, porque ningún token de entrada cuesta más que
+   una escritura en caché. Los precios van como constantes en código, con la
+   fecha en que se tomaron (14 sep 2026, `claude-haiku-4-5`: $1.25 y $5 por
+   millón de tokens). §7.2 registra además `cache_creation_tokens`.
+2. **Concurrencia en una sesión (§6).** El límite de 10 también se cumple con
+   peticiones simultáneas a la misma sesión: se procesan de una en una, con un
+   lock por sesión dentro del proceso, y la segunda espera a que termine la
+   primera. Supone una instancia y un worker, igual que el paso 5
+   (`CLAUDE.md` → Render).
+3. **Reintentos (§7.1).** El cliente de Anthropic se crea con `max_retries=0`,
+   así que los únicos reintentos son los de §7.1: uno, tras 2 s. Solo se
+   reintenta antes de enviar el primer `delta`; con texto ya enviado aplica la
+   fila "stream interrumpido". En el paso 6, sin streaming, el reintento cubre
+   la llamada completa. `retried` es verdadero si ese reintento ocurrió.
+4. **Variables (§11).** Cada variable es obligatoria desde el paso de §13 que la
+   usa: `SUPABASE_URL` y `SUPABASE_SERVICE_KEY` (paso 4), `IP_HASH_SALT` (5),
+   `ANTHROPIC_API_KEY` (6) y `DAILY_BUDGET_USD` (9). `DAILY_BUDGET_USD` debe ser
+   un número mayor que 0; si no, la app no arranca. `ENVIRONMENT` no tiene
+   efecto en esta versión y no se exige.
+5. **Guardrails (§8).** El texto vive en código, no en `knowledge/`, así que no
+   cuenta en `corpus_files` de `/health`. Va en el `system` antes del corpus,
+   dentro del mismo prefijo cacheado. Se verifica leyendo el texto y con una
+   pregunta fuera de tema por curl, que debe redirigir en una frase.
