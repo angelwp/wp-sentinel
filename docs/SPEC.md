@@ -281,3 +281,32 @@ permisos sobre cada tabla, y el proyecto no los otorgó solo. Sin ellos,
 cualquier lectura o escritura falla con `42501 permission denied`. Se detectó
 en el paso 4 al correr `scripts/verify_supabase.py` (`4c3448b`). La auditoría
 del PR #1 lo señaló como duda de alcance y el usuario decidió conservarlos.
+
+**14 sep 2026 — §5, §6, §7.1: `POST /api/chat` antes del proveedor.** Sin cambio
+de versión: define lo que el spec dejaba abierto y no contradice ninguna
+sección. Motivo: la revisión del spec (issue #8, hallazgos 1 a 4) marcó estos
+puntos como bloqueantes para el paso 6. El usuario aceptó las propuestas.
+
+1. **Respuesta sin streaming (§13 paso 6).** `POST /api/chat` responde 200 con
+   `{"text":"<respuesta completa>","messages_remaining":<int>,"tokens_used":<int>}`.
+   Es el texto que en SSE iría repartido en los `delta`, más los campos de
+   `done`. En el paso 7 esta respuesta se reemplaza por el SSE de §5.
+2. **Errores antes de llamar al proveedor.** Responden con su status HTTP y cuerpo
+   JSON `{"code":"<string>","message":"<texto para el usuario>"}`, igual que
+   `POST /api/session`. Aplica a `message_too_long`, `session_limit`,
+   `budget_exceeded` y a los códigos del punto 3. `event: error` solo se usa
+   con el stream ya abierto.
+3. **Validación de la petición.**
+   - 422 `invalid_request`: el cuerpo no es JSON válido, falta `session_id` o
+     `message`, `session_id` no es un UUID, o `message` está vacío.
+   - 422 `message_too_long`: `message` de más de 2000 caracteres (§6).
+   - 404 `session_not_found`: `session_id` es un UUID válido pero no existe.
+   - Orden: primero se valida el cuerpo y después se busca la sesión. Así la
+     prueba 3 de §10 no depende de que exista una sesión en la base.
+4. **Qué cuenta como mensaje (límite de 10, §6).** Cuenta cada mensaje del
+   usuario cuya respuesta se persistió, completa o con `truncated = true`. Un
+   intento que termina en error sin respuesta persistida no consume cupo.
+   `sessions.message_count` y `sessions.total_tokens` se actualizan al persistir
+   la respuesta. `messages_remaining = 10 − message_count`. Si `message_count`
+   ya es 10, responde 429 `session_limit` sin llamar al proveedor. Qué tokens
+   se suman queda para el hallazgo 5 del issue #8.
