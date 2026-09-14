@@ -127,7 +127,7 @@ Envía un mensaje y devuelve la respuesta en streaming.
 |---|---|---|
 | Mensajes por sesión | 10 | 429 `session_limit` |
 | Sesiones por IP / 24 h | 3 | 429 `ip_limit` |
-| Largo del mensaje | 2000 caracteres | 422 `message_too_long` |
+| Largo del mensaje | 2000 caracteres (code points, ver "Cambios al spec") | 422 `message_too_long` |
 | `max_tokens` por respuesta | 1024 | — |
 | Presupuesto global / 24 h | `DAILY_BUDGET_USD` | 503 `budget_exceeded` |
 
