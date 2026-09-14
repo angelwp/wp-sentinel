@@ -309,4 +309,40 @@ puntos como bloqueantes para el paso 6. El usuario aceptó las propuestas.
    `sessions.message_count` y `sessions.total_tokens` se actualizan al persistir
    la respuesta. `messages_remaining = 10 − message_count`. Si `message_count`
    ya es 10, responde 429 `session_limit` sin llamar al proveedor. Qué tokens
-   se suman queda para el hallazgo 5 del issue #8.
+   se suman lo define la entrada siguiente, punto 1.
+
+**14 sep 2026 — §6, §7, §8, §11: costo, concurrencia, reintentos, variables y
+guardrails.** Sin cambio de versión, por el mismo motivo que la entrada
+anterior. Motivo: los hallazgos 5, 7, 8, 13 y 16 del issue #8 afectan el paso 6.
+El usuario aceptó las recomendaciones del ejecutor.
+
+1. **Tokens y presupuesto (§4.2, §5, §6, §7.2).** `tokens_in` es la suma de los
+   tres conteos de entrada que reporta la API: `input_tokens`,
+   `cache_creation_input_tokens` y `cache_read_input_tokens`. `tokens_in` y
+   `tokens_out` se guardan en la fila `assistant` de `messages`; la fila `user`
+   los deja en `null`. `tokens_used` y lo que se suma a `sessions.total_tokens`
+   es `tokens_in + tokens_out` de esa llamada. El gasto de §6 cobra toda la
+   entrada al precio de escritura en caché del modelo y la salida a su precio de
+   salida. Es una cota superior, porque ningún token de entrada cuesta más que
+   una escritura en caché. Los precios van como constantes en código, con la
+   fecha en que se tomaron (14 sep 2026, `claude-haiku-4-5`: $1.25 y $5 por
+   millón de tokens). §7.2 registra además `cache_creation_tokens`.
+2. **Concurrencia en una sesión (§6).** El límite de 10 también se cumple con
+   peticiones simultáneas a la misma sesión: se procesan de una en una, con un
+   lock por sesión dentro del proceso, y la segunda espera a que termine la
+   primera. Supone una instancia y un worker, igual que el paso 5
+   (`CLAUDE.md` → Render).
+3. **Reintentos (§7.1).** El cliente de Anthropic se crea con `max_retries=0`,
+   así que los únicos reintentos son los de §7.1: uno, tras 2 s. Solo se
+   reintenta antes de enviar el primer `delta`; con texto ya enviado aplica la
+   fila "stream interrumpido". En el paso 6, sin streaming, el reintento cubre
+   la llamada completa. `retried` es verdadero si ese reintento ocurrió.
+4. **Variables (§11).** Cada variable es obligatoria desde el paso de §13 que la
+   usa: `SUPABASE_URL` y `SUPABASE_SERVICE_KEY` (paso 4), `IP_HASH_SALT` (5),
+   `ANTHROPIC_API_KEY` (6) y `DAILY_BUDGET_USD` (9). `DAILY_BUDGET_USD` debe ser
+   un número mayor que 0; si no, la app no arranca. `ENVIRONMENT` no tiene
+   efecto en esta versión y no se exige.
+5. **Guardrails (§8).** El texto vive en código, no en `knowledge/`, así que no
+   cuenta en `corpus_files` de `/health`. Va en el `system` antes del corpus,
+   dentro del mismo prefijo cacheado. Se verifica leyendo el texto y con una
+   pregunta fuera de tema por curl, que debe redirigir en una frase.
