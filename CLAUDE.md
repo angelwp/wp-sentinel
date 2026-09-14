@@ -51,6 +51,6 @@ El chat no se conserva. Todo el contexto para seguir, desde cualquier máquina o
 | Qué está en curso y qué falta | PRs abiertos: descripción + último comentario `## Estado` |
 | Qué se decidió y por qué | Si cambia alcance, arquitectura o criterios de aceptación: "Cambios al spec" en `docs/SPEC.md`. Todo lo demás, y el registro de cada merge: cuerpo de los commits squash en `main` |
 
-- **Al retomar:** `git fetch`, `gh pr list` y leer el último comentario `## Estado` de cada PR abierto. Si no hay PRs abiertos, el siguiente paso es el primero de §13 que no esté en `git log main`.
+- **Al retomar:** `git fetch`, `gh pr list` y leer el último comentario `## Estado` de cada PR abierto. Si no hay PRs abiertos, busca el último commit `Step N:` en `git log main`; el siguiente es el paso N+1. Los pasos 1 y 2 (`3f2e997`, `46c3e43`) y parte del 4 (`5559c4a`, `4c3448b`) son anteriores a la convención y no llevan el prefijo.
 - **Al pausar:** el ejecutor deja en cada PR abierto un comentario `## Estado — <fecha>` con los pendientes en orden, cada uno con su responsable (usuario, ejecutor o auditor). Nunca secretos.
 - No se mantiene un archivo de estado aparte: se desactualiza y duplica lo que ya dicen los PRs.
