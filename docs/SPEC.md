@@ -110,7 +110,8 @@ Crea una sesión.
 ### `POST /api/chat`
 Envía un mensaje y devuelve la respuesta en streaming.
 
-- Request: `{"session_id":"<uuid>","message":"<string, 1..2000 chars>"}`
+- Request: `{"session_id":"<uuid>","message":"<string, 1..2000 chars>"}`.
+  Caracteres = code points (`len()` de Python; ver "Cambios al spec").
 - Respuesta: `text/event-stream` (SSE).
   - `event: delta`  → `{"text":"..."}`
   - `event: done`   → `{"messages_remaining":<int>,"tokens_used":<int>}`
@@ -164,7 +165,7 @@ Log estructurado en JSON a stdout (Render lo captura). Cada llamada a
 - `session_id`
 - `event`: `start` | `done` | `error`
 - `code` en caso de error
-- `latency_ms` hasta el primer chunk y total
+- `latency_first_chunk_ms`, `latency_total_ms`
 - `tokens_in`, `tokens_out`, `cache_read_tokens`
 - `retried`: booleano
 
@@ -346,3 +347,17 @@ El usuario aceptó las recomendaciones del ejecutor.
    cuenta en `corpus_files` de `/health`. Va en el `system` antes del corpus,
    dentro del mismo prefijo cacheado. Se verifica leyendo el texto y con una
    pregunta fuera de tema por curl, que debe redirigir en una frase.
+
+**14 sep 2026 — §5, §6, §7.2: unidad de caracteres y campos de latencia.** Sin
+cambio de versión, por el mismo motivo que las entradas anteriores. Motivo: los
+hallazgos MENOR 17 y 18 del issue #8 afectan la validación del paso 6.
+
+1. **Unidad de "2000 caracteres" (§5, §6).** Caracteres = code points, lo que
+   cuenta `len()` en Python. Un emoji fuera del plano básico cuenta 1 aquí,
+   pero 2 con `.length` en JavaScript (UTF-16). La API, que es la fuente de
+   verdad, valida con `len()`. Si el front del paso 10 valida el mismo límite,
+   debe contar code points explícitamente (p. ej. `Array.from(str).length`),
+   no usar `.length` directo.
+2. **Campos de latencia (§7.2).** `latency_ms` se separa en dos campos:
+   `latency_first_chunk_ms` (hasta el primer chunk) y `latency_total_ms`
+   (duración total de la llamada).
