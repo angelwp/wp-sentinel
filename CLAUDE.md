@@ -60,4 +60,21 @@ Se omite la sección que no aplique. Nunca van secretos ni valores de `.env`.
    cd ../wp-sentinel-audit
    python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
    cp ../wp-sentinel/.env .env
+   cp .claude/auditor-settings.json .claude/settings.local.json
    ```
+   El último `cp` agrega una **segunda capa**, no un sandbox. En ese directorio, Claude Code niega las herramientas `Edit` y `Write`, y los comandos de la lista `deny` de `.claude/auditor-settings.json`: commits, push, merge, cambios de archivos con git y `gh api`, entre otros. No bloquea toda escritura posible: un redirect de shell (`>`) o un comando que no esté en la lista todavía podría escribir. La primera capa sigue siendo la instrucción "el auditor nunca edita". `settings.local.json` está en `.gitignore`, así que no ensucia el `git status` que revisa `/audit-spec`. Si el auditor necesita un comando nuevo, se ajusta la plantilla por PR.
+
+## Seguimiento y retomar trabajo
+
+El chat no se conserva. Todo el contexto para seguir, desde cualquier máquina o persona, vive en GitHub:
+
+| Pregunta | Dónde |
+|---|---|
+| Qué se construye | `docs/SPEC.md` |
+| Cómo se trabaja | este archivo |
+| Qué está en curso y qué falta | PRs abiertos (descripción + último comentario `## Estado`) e issues abiertos (revisiones del spec con hallazgos sin decidir) |
+| Qué se decidió y por qué | Si cambia alcance, arquitectura o criterios de aceptación: "Cambios al spec" en `docs/SPEC.md`. Todo lo demás, y el registro de cada merge: cuerpo de los commits squash en `main` |
+
+- **Al retomar:** `git fetch`, `gh pr list` y `gh issue list`. Lee el último comentario `## Estado` de cada PR abierto y el último comentario de cada issue abierto. Si un hallazgo sin decidir afecta el siguiente paso, se decide antes de implementarlo. Si no hay PRs abiertos, busca el último commit `Step N:` en `git log main`; el siguiente es el paso N+1. Los pasos 1 y 2 (`3f2e997`, `46c3e43`) y parte del 4 (`5559c4a`, `4c3448b`) son anteriores a la convención y no llevan el prefijo.
+- **Al pausar:** el ejecutor deja en cada PR abierto un comentario `## Estado — <fecha>` con los pendientes en orden, cada uno con su responsable (usuario, ejecutor o auditor). En cada issue abierto, el último comentario dice qué hallazgos siguen sin decidir. Nunca secretos.
+- No se mantiene un archivo de estado aparte: se desactualiza y duplica lo que ya dicen los PRs.
