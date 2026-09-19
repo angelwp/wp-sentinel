@@ -1,11 +1,26 @@
 import logging
+import uuid
+from functools import lru_cache
 
+import anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 load_dotenv()
 
+from app.chat import (  # noqa: E402
+    MESSAGE_MAX_CHARS,
+    PROVIDER_TIMEOUT_SECONDS,
+    ProviderError,
+    build_system_prompt,
+    call_provider,
+    fetch_history,
+    fetch_session,
+    persist_exchange,
+    session_lock,
+)
 from app.config import get_settings  # noqa: E402
 from app.corpus import load_corpus  # noqa: E402
 from app.db import get_supabase  # noqa: E402
@@ -36,7 +51,27 @@ logging.getLogger("uvicorn.access").addFilter(_HideClientAddr())
 app = FastAPI()
 
 CORPUS_TEXT, CORPUS_FILE_COUNT = load_corpus()
+SYSTEM_PROMPT = build_system_prompt(CORPUS_TEXT)
 get_supabase()  # valida credenciales de Supabase al arrancar (SPEC §11)
+
+
+@lru_cache
+def get_anthropic() -> anthropic.Anthropic:
+    # max_retries=0: los únicos reintentos son los de SPEC §7.1 (app/chat.py).
+    return anthropic.Anthropic(
+        api_key=get_settings().anthropic_api_key,
+        max_retries=0,
+        timeout=PROVIDER_TIMEOUT_SECONDS,
+    )
+
+
+def _error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code, content={"code": code, "message": message}
+    )
+
+
+_INVALID_REQUEST = "La petición no tiene el formato esperado."
 
 
 @app.get("/health")
@@ -67,3 +102,72 @@ def new_session(request: Request):
         )
 
     return {"session_id": session_id, "messages_remaining": MESSAGES_PER_SESSION}
+
+
+@app.post("/api/chat")
+async def chat(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return _error(422, "invalid_request", _INVALID_REQUEST)
+
+    if not isinstance(body, dict):
+        return _error(422, "invalid_request", _INVALID_REQUEST)
+
+    session_id = body.get("session_id")
+    message = body.get("message")
+
+    if not isinstance(session_id, str) or not isinstance(message, str):
+        return _error(422, "invalid_request", _INVALID_REQUEST)
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        return _error(422, "invalid_request", _INVALID_REQUEST)
+    if len(message) == 0:
+        return _error(422, "invalid_request", _INVALID_REQUEST)
+    if len(message) > MESSAGE_MAX_CHARS:
+        return _error(
+            422,
+            "message_too_long",
+            f"El mensaje supera los {MESSAGE_MAX_CHARS} caracteres permitidos.",
+        )
+
+    # Supabase y Anthropic son clientes síncronos: correrlos aquí bloquearía
+    # el event loop y, con un solo worker, a todo el servidor. El lock por
+    # sesión también es de threading, así que todo va al threadpool.
+    return await run_in_threadpool(_chat_turn, session_id, message)
+
+
+def _chat_turn(session_id: str, message: str):
+    db = get_supabase()
+
+    with session_lock(session_id):
+        session = fetch_session(db, session_id)
+        if session is None:
+            return _error(404, "session_not_found", "Esa sesión no existe.")
+
+        if session["message_count"] >= MESSAGES_PER_SESSION:
+            return _error(
+                429,
+                "session_limit",
+                f"Esta conversación llegó a su límite de {MESSAGES_PER_SESSION} "
+                "mensajes. Abre una sesión nueva para seguir.",
+            )
+
+        history = fetch_history(db, session_id)
+        history.append({"role": "user", "content": message})
+
+        try:
+            text, tokens_in, tokens_out = call_provider(
+                get_anthropic(), SYSTEM_PROMPT, history
+            )
+        except ProviderError as exc:
+            return _error(exc.status_code, exc.code, exc.message)
+
+        persist_exchange(db, session, message, text, tokens_in, tokens_out)
+
+    return {
+        "text": text,
+        "messages_remaining": MESSAGES_PER_SESSION - session["message_count"] - 1,
+        "tokens_used": tokens_in + tokens_out,
+    }

@@ -15,6 +15,7 @@ class Settings:
     supabase_url: str
     supabase_service_key: str
     ip_hash_salt: str
+    anthropic_api_key: str
 
 
 @lru_cache
@@ -23,4 +24,5 @@ def get_settings() -> Settings:
         supabase_url=_require("SUPABASE_URL"),
         supabase_service_key=_require("SUPABASE_SERVICE_KEY"),
         ip_hash_salt=_require("IP_HASH_SALT"),
+        anthropic_api_key=_require("ANTHROPIC_API_KEY"),
     )
