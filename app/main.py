@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 load_dotenv()
 
 from app.chat import (  # noqa: E402
+    INTERNAL_ERROR_MESSAGE,
     MESSAGE_MAX_CHARS,
     PROVIDER_TIMEOUT_SECONDS,
     ProviderError,
@@ -71,7 +72,28 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    # SPEC §7.1: todo error termina en un mensaje legible, con el mismo cuerpo
+    # {"code","message"}. Starlette vuelve a lanzar la excepción después de
+    # responder, así que el traceback sigue llegando al log.
+    return _error(500, "internal_error", INTERNAL_ERROR_MESSAGE)
+
+
 _INVALID_REQUEST = "La petición no tiene el formato esperado."
+
+
+def _is_storable(text: str) -> bool:
+    """Postgres no guarda NUL en `text`, y un surrogate suelto no se codifica
+    en UTF-8. Se rechazan antes de llamar al proveedor: si no, la llamada se
+    cobra y la inserción falla después, sin consumir cupo."""
+    if "\x00" in text:
+        return False
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 @app.get("/health")
@@ -119,11 +141,14 @@ async def chat(request: Request):
 
     if not isinstance(session_id, str) or not isinstance(message, str):
         return _error(422, "invalid_request", _INVALID_REQUEST)
+    # uuid.UUID() acepta varias grafías del mismo UUID (mayúsculas, sin guiones,
+    # llaves, urn:uuid:). Se sigue con la canónica: Postgres no acepta todas, y
+    # cada sesión debe tener un solo lock.
     try:
-        uuid.UUID(session_id)
+        session_id = str(uuid.UUID(session_id))
     except ValueError:
         return _error(422, "invalid_request", _INVALID_REQUEST)
-    if len(message) == 0:
+    if len(message) == 0 or not _is_storable(message):
         return _error(422, "invalid_request", _INVALID_REQUEST)
     if len(message) > MESSAGE_MAX_CHARS:
         return _error(

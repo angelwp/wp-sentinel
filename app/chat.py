@@ -16,6 +16,7 @@ PROVIDER_RETRY_WAIT_SECONDS = 2
 # que el timeout de lectura de httpx equivale a "30 s sin primer chunk". El
 # default del SDK es 600 s y retendría el lock de la sesión todo ese tiempo.
 PROVIDER_TIMEOUT_SECONDS = 30.0
+INTERNAL_ERROR_MESSAGE = "Ocurrió un error interno. Intenta de nuevo más tarde."
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ _PROVIDER_ERRORS = {
         " nuevo en unos minutos.",
     ),
     "timeout": (504, "El asesor tardó demasiado en responder. Intenta de nuevo."),
-    "internal_error": (500, "Ocurrió un error interno. Intenta de nuevo más tarde."),
+    "internal_error": (500, INTERNAL_ERROR_MESSAGE),
 }
 
 
