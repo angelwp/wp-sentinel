@@ -363,10 +363,9 @@ hallazgos MENOR 17 y 18 del issue #8 afectan la validación del paso 6.
    (duración total de la llamada).
 
 **21 sep 2026 — §9: sin fecha límite.** Sin cambio de versión: no cambia qué
-se construye ni los seis criterios de terminado, solo quita el plazo. Se
-elimina "Fecha límite: 24 de septiembre de 2026", junto con la regla de
-publicar ese día si se cumplían los criterios 1, 2 y 3. El orden de §13 sigue
-igual y no se adelantan pasos. Motivo: la revisión del spec (issue #8,
-hallazgo 12) mostró que cumplir el 24 obligaba a reordenar §13 y a publicar
-sin pruebas ni CI. El usuario prefiere hacerlo bien y darle uso real al
-proyecto, en vez de terminarlo a tiempo sin más.
+se construye ni los seis criterios de terminado. §9 ya no fija una fecha de
+publicación. El orden de §13 sigue igual y no se adelantan pasos. Motivo: la
+revisión del spec (issue #8, hallazgo 12) mostró que cumplir la fecha obligaba
+a reordenar §13 y a publicar sin pruebas ni CI. El usuario prefiere hacerlo
+bien y darle uso real al proyecto. Ningún archivo que lean los agentes
+menciona ya una fecha (`.claude/commands/review-spec.md` tampoco).
