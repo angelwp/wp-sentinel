@@ -198,8 +198,8 @@ agrega nada después:
 5. GitHub Actions corriendo las pruebas en cada push, en verde.
 6. `docker compose up` levanta el proyecto en local.
 
-**Fecha límite: 24 de septiembre de 2026.** Se publica ese día en el estado
-en que esté, siempre que 1, 2 y 3 se cumplan.
+**Sin fecha límite** (ver "Cambios al spec", 21 sep 2026). Los pasos se
+completan en el orden de §13.
 
 ## 10. Pruebas mínimas
 
@@ -361,3 +361,12 @@ hallazgos MENOR 17 y 18 del issue #8 afectan la validación del paso 6.
 2. **Campos de latencia (§7.2).** `latency_ms` se separa en dos campos:
    `latency_first_chunk_ms` (hasta el primer chunk) y `latency_total_ms`
    (duración total de la llamada).
+
+**21 sep 2026 — §9: sin fecha límite.** Sin cambio de versión: no cambia qué
+se construye ni los seis criterios de terminado, solo quita el plazo. Se
+elimina "Fecha límite: 24 de septiembre de 2026", junto con la regla de
+publicar ese día si se cumplían los criterios 1, 2 y 3. El orden de §13 sigue
+igual y no se adelantan pasos. Motivo: la revisión del spec (issue #8,
+hallazgo 12) mostró que cumplir el 24 obligaba a reordenar §13 y a publicar
+sin pruebas ni CI. El usuario prefiere hacerlo bien y darle uso real al
+proyecto, en vez de terminarlo a tiempo sin más.
