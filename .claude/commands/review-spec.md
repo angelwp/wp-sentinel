@@ -42,7 +42,7 @@ Revisa cada sección contra estos criterios:
 - **Verificabilidad**: ¿cada requisito tiene una forma concreta de probarse?
 - **Consistencia**: ¿contradice otra sección, `CLAUDE.md` o el código ya mergeado?
 - **Huecos**: ¿falta una decisión que un paso pendiente de §13 va a necesitar?
-- **Factibilidad**: ¿algún criterio de §9 o §10 choca con el stack de §3 o con la fecha límite?
+- **Factibilidad**: ¿algún criterio de §9 o §10 choca con el stack de §3?
 
 Verifica corriendo lo que sea de solo lectura (versiones, `curl` a `/health`, `gh`).
 Nunca imprimas valores de `.env`.
