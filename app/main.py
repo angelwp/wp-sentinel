@@ -1,12 +1,15 @@
+import asyncio
 import logging
 import uuid
 from functools import lru_cache
 
 import anthropic
+import anyio
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.types import Receive, Scope, Send
 
 load_dotenv()
 
@@ -14,12 +17,10 @@ from app.chat import (  # noqa: E402
     INTERNAL_ERROR_MESSAGE,
     MESSAGE_MAX_CHARS,
     PROVIDER_TIMEOUT_SECONDS,
-    ProviderError,
     build_system_prompt,
-    call_provider,
+    chat_events,
     fetch_history,
     fetch_session,
-    persist_exchange,
     session_lock,
 )
 from app.config import get_settings  # noqa: E402
@@ -57,9 +58,9 @@ get_supabase()  # valida credenciales de Supabase al arrancar (SPEC §11)
 
 
 @lru_cache
-def get_anthropic() -> anthropic.Anthropic:
+def get_anthropic() -> anthropic.AsyncAnthropic:
     # max_retries=0: los únicos reintentos son los de SPEC §7.1 (app/chat.py).
-    return anthropic.Anthropic(
+    return anthropic.AsyncAnthropic(
         api_key=get_settings().anthropic_api_key,
         max_retries=0,
         timeout=PROVIDER_TIMEOUT_SECONDS,
@@ -157,21 +158,18 @@ async def chat(request: Request):
             f"El mensaje supera los {MESSAGE_MAX_CHARS} caracteres permitidos.",
         )
 
-    # Supabase y Anthropic son clientes síncronos: correrlos aquí bloquearía
-    # el event loop y, con un solo worker, a todo el servidor. El lock por
-    # sesión también es de threading, así que todo va al threadpool.
-    return await run_in_threadpool(_chat_turn, session_id, message)
-
-
-def _chat_turn(session_id: str, message: str):
-    db = get_supabase()
-
-    with session_lock(session_id):
-        session = fetch_session(db, session_id)
+    lock = session_lock(session_id)
+    await lock.acquire()
+    try:
+        # Supabase es síncrono: al threadpool, para no bloquear el event loop.
+        db = get_supabase()
+        session = await run_in_threadpool(fetch_session, db, session_id)
         if session is None:
+            lock.release()
             return _error(404, "session_not_found", "Esa sesión no existe.")
 
         if session["message_count"] >= MESSAGES_PER_SESSION:
+            lock.release()
             return _error(
                 429,
                 "session_limit",
@@ -179,20 +177,49 @@ def _chat_turn(session_id: str, message: str):
                 "mensajes. Abre una sesión nueva para seguir.",
             )
 
-        history = fetch_history(db, session_id)
-        history.append({"role": "user", "content": message})
+        history = await run_in_threadpool(fetch_history, db, session_id)
+    except BaseException:
+        lock.release()
+        raise
 
+    # Desde aquí el lock es de la respuesta: lo suelta al terminar el stream.
+    return _SessionStream(
+        chat_events(
+            db,
+            get_anthropic(),
+            SYSTEM_PROMPT,
+            session,
+            history,
+            message,
+            MESSAGES_PER_SESSION,
+        ),
+        lock,
+    )
+
+
+class _SessionStream(StreamingResponse):
+    """SSE (SPEC §5) que retiene el lock de la sesión hasta terminar.
+
+    El lock no se suelta dentro del generador: si el cliente se desconecta
+    antes de que empiece a iterar, su código nunca corre. Al terminar, pase
+    lo que pase, se cierra el generador (así corre su limpieza, que persiste
+    lo recibido) y después se suelta el lock.
+    """
+
+    def __init__(self, content, lock: asyncio.Lock):
+        super().__init__(
+            content,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+        self._lock = lock
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
-            text, tokens_in, tokens_out = call_provider(
-                get_anthropic(), SYSTEM_PROMPT, history
-            )
-        except ProviderError as exc:
-            return _error(exc.status_code, exc.code, exc.message)
-
-        persist_exchange(db, session, message, text, tokens_in, tokens_out)
-
-    return {
-        "text": text,
-        "messages_remaining": MESSAGES_PER_SESSION - session["message_count"] - 1,
-        "tokens_used": tokens_in + tokens_out,
-    }
+            await super().__call__(scope, receive, send)
+        finally:
+            with anyio.CancelScope(shield=True):
+                try:
+                    await self.body_iterator.aclose()
+                finally:
+                    self._lock.release()
