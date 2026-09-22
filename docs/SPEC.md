@@ -119,7 +119,9 @@ Envía un mensaje y devuelve la respuesta en streaming.
 - El historial completo de la sesión se reconstruye desde `messages` y se
   envía al proveedor en cada llamada.
 - Se persisten el mensaje del usuario y la respuesta completa al terminar el
-  stream, con sus conteos de tokens.
+  stream, con sus conteos de tokens. Si el stream se interrumpe, se persiste
+  lo recibido, y las respuestas vacías no entran al historial (ver "Cambios al
+  spec", 21 sep 2026).
 
 ## 6. Límites y presupuesto
 
@@ -150,8 +152,9 @@ Esta sección es criterio de evaluación del proyecto. No se omite.
 |---|---|
 | 429 del proveedor | Un reintento con espera de 2 s. Si falla, `event: error` con `code: "busy"` y mensaje en lenguaje natural. |
 | 529 / 5xx | Un reintento con espera de 2 s. Si falla, `code: "provider_down"`. |
-| Timeout (>30 s sin primer chunk) | Se corta el stream, `code: "timeout"`. |
-| Stream interrumpido a media respuesta | Se persiste lo recibido con `truncated = true`. |
+| Timeout (>30 s sin recibir nada del proveedor, antes o después del primer chunk) | Se corta el stream, `code: "timeout"`. Lo recibido se persiste como en la fila siguiente. |
+| Stream interrumpido a media respuesta | Se persiste lo recibido con `truncated = true` (qué cuenta como interrupción: ver "Cambios al spec", 21 sep 2026). |
+| 4xx del proveedor, salvo 429 | `code: "internal_error"` (500 si el stream aún no se abrió). Sin reintento. |
 | Error de validación o sesión inexistente | 4xx con código explícito. Sin reintento. |
 
 **Regla:** el front nunca se queda en blanco. Todo error termina en un mensaje
@@ -369,3 +372,56 @@ revisión del spec (issue #8, hallazgo 12) mostró que cumplir la fecha obligaba
 a reordenar §13 y a publicar sin pruebas ni CI. El usuario prefiere hacerlo
 bien y darle uso real al proyecto. Ningún archivo que lean los agentes
 menciona ya una fecha (`.claude/commands/review-spec.md` tampoco).
+
+**21 sep 2026 — §5, §6, §7.1: stream interrumpido; §5, §7.1, §7.2: dos reglas
+del paso 6.**
+Sin cambio de versión: define lo que el spec dejaba abierto. Motivo: el
+hallazgo 9 del issue #8 afecta el paso 7, y el paso 6 (`3538283`) dejó dos
+decisiones del usuario pendientes de anotar aquí. El usuario aceptó las
+propuestas del ejecutor.
+
+1. **Stream interrumpido (§7.1).** Regla general: si llegó `message_start`, el
+   proveedor ya cobró la entrada, así que el intercambio se persiste y consume
+   cupo, pase lo que pase después. Así el presupuesto de §6 ve toda llamada
+   pagada, y desconectarse a propósito no da llamadas gratis. Amplía el punto 4
+   de la primera entrada del 14 sep: una respuesta vacía también cuenta si llegó
+   `message_start`.
+   - Si el cliente se desconecta, se cancela la llamada al proveedor y lo
+     recibido se persiste con `truncated = true`.
+   - `stop_reason = max_tokens` marca `truncated = true`. Para el usuario es un
+     final normal: `event: done`, no error.
+   - Las respuestas `truncated` con texto entran al historial que se reenvía.
+     Las vacías se persisten, pero ni ellas ni su mensaje de usuario entran al
+     historial, porque la API rechaza un mensaje de asistente vacío.
+   - Si no llegó el conteo final de salida, se guarda `tokens_out = 1024`
+     (`max_tokens`), una cota superior con el mismo criterio que el costo de la
+     segunda entrada del 14 sep, punto 1. `tokens_in` sale de `message_start`.
+   - Timeout: 30 s sin recibir nada del proveedor, antes o después del primer
+     chunk. Lo recibido se persiste como `truncated` y se envía `event: error`
+     con `code: "timeout"`.
+   - Si el proveedor falla a media respuesta, lo recibido se persiste como
+     `truncated` y se envía `event: error` con `busy` o `provider_down`. No hay
+     códigos nuevos.
+   - Costo aceptado: si el proveedor falla después de `message_start` y antes
+     del primer texto, el usuario pierde un mensaje de su cupo. Es un caso
+     raro, y distinguirlo de una desconexión del cliente añade complejidad.
+   - Reintentos: no se reintenta después de `message_start`, porque la entrada
+     ya se cobró y un segundo intento la pagaría otra vez. Esto corrige la
+     segunda entrada del 14 sep, punto 3: el límite del reintento de §7.1 pasa
+     de "antes del primer `delta`" a "antes de `message_start`". Los 429, 529 y
+     5xx que llegan como respuesta HTTP, antes del stream, conservan su
+     reintento. Se reevalúa si los logs del paso 8 muestran con frecuencia
+     fallos entre `message_start` y el primer texto.
+2. **4xx del proveedor (§7.1, §7.2).** Fila nueva: todo 4xx salvo 429, que
+   sigue en su propia fila con reintento y `busy`, da 500 `internal_error`,
+   sin reintento. Es un error de configuración propio y determinista (clave
+   inválida, petición mal formada). §7.2 registra además el `status` y el
+   `request_id` del proveedor en ese error, sin contenido de mensajes. Con el
+   stream ya abierto va como `event: error`, según la segunda regla de la
+   primera entrada del 14 sep.
+3. **Contenido inválido (§5).** Amplía el punto 3 de la primera entrada del
+   14 sep: un `message` con el carácter NUL o con surrogates sueltos responde
+   422 `invalid_request`. Postgres no guarda NUL en `text`, y un surrogate
+   suelto no se puede codificar. Este chequeo corre antes que el de largo, así
+   que 2000 caracteres más un NUL dan `invalid_request` y no
+   `message_too_long`.
