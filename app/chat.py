@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 import anthropic
 import anyio
+import httpx2
 from starlette.concurrency import run_in_threadpool
 from supabase import Client
 
@@ -199,6 +200,13 @@ async def stream_provider(
             raise ProviderError("timeout") from exc
         except anthropic.APIConnectionError as exc:
             raise ProviderError("provider_down") from exc
+        # Ya con los headers recibidos, el SDK deja pasar los errores de httpx2
+        # sin envolverlos: silencio de más de 30 s o conexión cortada a media
+        # respuesta.
+        except httpx2.TimeoutException as exc:
+            raise ProviderError("timeout") from exc
+        except httpx2.TransportError as exc:
+            raise ProviderError("provider_down") from exc
         except anthropic.APIStatusError as exc:
             code = _status_error_code(exc)
             if code == "internal_error":
@@ -306,8 +314,13 @@ async def chat_events(
         raise
     except Exception:
         # Con el stream abierto ya no hay status HTTP que cambiar: el error va
-        # como evento (SPEC §7.1: el front nunca se queda en blanco).
+        # como evento (SPEC §7.1: el front nunca se queda en blanco). Si la
+        # llamada ya se cobró, se persiste igual.
         logger.exception("chat_stream_failed")
+        try:
+            await persist()
+        except Exception:
+            logger.exception("chat_persist_failed")
         yield sse(
             "error", {"code": "internal_error", "message": INTERNAL_ERROR_MESSAGE}
         )
