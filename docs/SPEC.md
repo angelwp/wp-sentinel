@@ -119,7 +119,9 @@ Envía un mensaje y devuelve la respuesta en streaming.
 - El historial completo de la sesión se reconstruye desde `messages` y se
   envía al proveedor en cada llamada.
 - Se persisten el mensaje del usuario y la respuesta completa al terminar el
-  stream, con sus conteos de tokens.
+  stream, con sus conteos de tokens. Si el stream se interrumpe, se persiste
+  lo recibido, y las respuestas vacías no entran al historial (ver "Cambios al
+  spec", 21 sep 2026).
 
 ## 6. Límites y presupuesto
 
@@ -371,8 +373,8 @@ a reordenar §13 y a publicar sin pruebas ni CI. El usuario prefiere hacerlo
 bien y darle uso real al proyecto. Ningún archivo que lean los agentes
 menciona ya una fecha (`.claude/commands/review-spec.md` tampoco).
 
-**21 sep 2026 — §6, §7.1: stream interrumpido; §5, §7.1, §7.2: dos reglas del
-paso 6.**
+**21 sep 2026 — §5, §6, §7.1: stream interrumpido; §5, §7.1, §7.2: dos reglas
+del paso 6.**
 Sin cambio de versión: define lo que el spec dejaba abierto. Motivo: el
 hallazgo 9 del issue #8 afecta el paso 7, y el paso 6 (`3538283`) dejó dos
 decisiones del usuario pendientes de anotar aquí. El usuario aceptó las
