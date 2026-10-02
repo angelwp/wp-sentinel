@@ -17,6 +17,7 @@ from app.chat import (  # noqa: E402
     INTERNAL_ERROR_MESSAGE,
     MESSAGE_MAX_CHARS,
     PROVIDER_TIMEOUT_SECONDS,
+    ChatCall,
     build_system_prompt,
     chat_events,
     fetch_history,
@@ -26,6 +27,7 @@ from app.chat import (  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.corpus import load_corpus  # noqa: E402
 from app.db import get_supabase  # noqa: E402
+from app.logs import configure_logging  # noqa: E402
 from app.sessions import (  # noqa: E402
     MESSAGES_PER_SESSION,
     SESSIONS_PER_IP,
@@ -49,6 +51,7 @@ class _HideClientAddr(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(_HideClientAddr())
+configure_logging()
 
 app = FastAPI()
 
@@ -129,48 +132,62 @@ def new_session(request: Request):
 
 @app.post("/api/chat")
 async def chat(request: Request):
+    # SPEC §7.2: también se registran las peticiones rechazadas antes de llamar
+    # al proveedor, como `error` con su código.
+    call = ChatCall()
+
+    def reject(status_code: int, code: str, message: str) -> JSONResponse:
+        call.log_end(code)
+        return _error(status_code, code, message)
+
     try:
         body = await request.json()
     except Exception:
-        return _error(422, "invalid_request", _INVALID_REQUEST)
+        return reject(422, "invalid_request", _INVALID_REQUEST)
 
     if not isinstance(body, dict):
-        return _error(422, "invalid_request", _INVALID_REQUEST)
+        return reject(422, "invalid_request", _INVALID_REQUEST)
 
     session_id = body.get("session_id")
     message = body.get("message")
 
     if not isinstance(session_id, str) or not isinstance(message, str):
-        return _error(422, "invalid_request", _INVALID_REQUEST)
+        return reject(422, "invalid_request", _INVALID_REQUEST)
     # uuid.UUID() acepta varias grafías del mismo UUID (mayúsculas, sin guiones,
     # llaves, urn:uuid:). Se sigue con la canónica: Postgres no acepta todas, y
     # cada sesión debe tener un solo lock.
     try:
         session_id = str(uuid.UUID(session_id))
     except ValueError:
-        return _error(422, "invalid_request", _INVALID_REQUEST)
+        return reject(422, "invalid_request", _INVALID_REQUEST)
+    # Solo un UUID válido llega al log: lo demás lo escribió el cliente.
+    call.session_id = session_id
     if len(message) == 0 or not _is_storable(message):
-        return _error(422, "invalid_request", _INVALID_REQUEST)
+        return reject(422, "invalid_request", _INVALID_REQUEST)
     if len(message) > MESSAGE_MAX_CHARS:
-        return _error(
+        return reject(
             422,
             "message_too_long",
             f"El mensaje supera los {MESSAGE_MAX_CHARS} caracteres permitidos.",
         )
 
     lock = session_lock(session_id)
-    await lock.acquire()
+    try:
+        await lock.acquire()
+    except BaseException:
+        call.log_end("client_disconnected")
+        raise
     try:
         # Supabase es síncrono: al threadpool, para no bloquear el event loop.
         db = get_supabase()
         session = await run_in_threadpool(fetch_session, db, session_id)
         if session is None:
             lock.release()
-            return _error(404, "session_not_found", "Esa sesión no existe.")
+            return reject(404, "session_not_found", "Esa sesión no existe.")
 
         if session["message_count"] >= MESSAGES_PER_SESSION:
             lock.release()
-            return _error(
+            return reject(
                 429,
                 "session_limit",
                 f"Esta conversación llegó a su límite de {MESSAGES_PER_SESSION} "
@@ -178,11 +195,16 @@ async def chat(request: Request):
             )
 
         history = await run_in_threadpool(fetch_history, db, session_id)
-    except BaseException:
+    except BaseException as exc:
         lock.release()
+        # El traceback lo registra uvicorn al relanzarse (unhandled_error).
+        call.log_end(
+            "internal_error" if isinstance(exc, Exception) else "client_disconnected"
+        )
         raise
 
     # Desde aquí el lock es de la respuesta: lo suelta al terminar el stream.
+    call.log_start()
     return _SessionStream(
         chat_events(
             db,
@@ -192,8 +214,10 @@ async def chat(request: Request):
             history,
             message,
             MESSAGES_PER_SESSION,
+            call,
         ),
         lock,
+        call,
     )
 
 
@@ -203,16 +227,19 @@ class _SessionStream(StreamingResponse):
     El lock no se suelta dentro del generador: si el cliente se desconecta
     antes de que empiece a iterar, su código nunca corre. Al terminar, pase
     lo que pase, se cierra el generador (así corre su limpieza, que persiste
-    lo recibido) y después se suelta el lock.
+    lo recibido) y después se suelta el lock. Por el mismo motivo, aquí se
+    registra la desconexión del cliente (SPEC §7.2): si el generador ya
+    registró `done` o `error`, no se registra nada más.
     """
 
-    def __init__(self, content, lock: asyncio.Lock):
+    def __init__(self, content, lock: asyncio.Lock, call: ChatCall):
         super().__init__(
             content,
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
         self._lock = lock
+        self._call = call
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
@@ -223,3 +250,4 @@ class _SessionStream(StreamingResponse):
                     await self.body_iterator.aclose()
                 finally:
                     self._lock.release()
+                    self._call.log_end("client_disconnected")

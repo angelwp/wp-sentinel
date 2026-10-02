@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
@@ -86,15 +87,6 @@ def fetch_history(db: Client, session_id: str) -> list[dict]:
     return history
 
 
-def _usage_tokens_in(usage: anthropic.types.Usage) -> int:
-    """Suma de los tres conteos de entrada (Cambios al spec, 14 sep 2026)."""
-    return (
-        (usage.input_tokens or 0)
-        + (usage.cache_creation_input_tokens or 0)
-        + (usage.cache_read_input_tokens or 0)
-    )
-
-
 class ProviderError(Exception):
     def __init__(self, code: str):
         self.code = code
@@ -142,8 +134,26 @@ class Turn:
     parts: list[str] = field(default_factory=list)
     started: bool = False  # llegó `message_start`: la entrada ya se cobró
     tokens_in: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
     tokens_out: int | None = None
     stop_reason: str | None = None
+    retried: bool = False
+    first_chunk_at: float | None = None  # time.monotonic()
+    # Del último error HTTP del proveedor (Cambios al spec, 21 sep 2026, punto 2).
+    provider_status: int | None = None
+    provider_request_id: str | None = None
+
+    def set_usage(self, usage: anthropic.types.Usage) -> None:
+        # `tokens_in` es la suma de los tres conteos de entrada (Cambios al
+        # spec, 14 sep 2026).
+        self.cache_read_tokens = usage.cache_read_input_tokens or 0
+        self.cache_creation_tokens = usage.cache_creation_input_tokens or 0
+        self.tokens_in = (
+            (usage.input_tokens or 0)
+            + self.cache_creation_tokens
+            + self.cache_read_tokens
+        )
 
     @property
     def text(self) -> str:
@@ -161,6 +171,63 @@ class Turn:
         return MAX_TOKENS if self.tokens_out is None else self.tokens_out
 
 
+def _ms(start: float, end: float | None) -> int | None:
+    return None if end is None else round((end - start) * 1000)
+
+
+@dataclass
+class ChatCall:
+    """Una llamada a `POST /api/chat`, para el log de SPEC §7.2.
+
+    Registra `start` cuando la petición pasa las validaciones y se abre el
+    stream, y después un solo `done` o `error`. Una petición rechazada antes
+    del proveedor registra solo `error`. Nunca lleva el contenido de los
+    mensajes, la IP ni el system prompt.
+    """
+
+    started_at: float = field(default_factory=time.monotonic)
+    session_id: str | None = None
+    turn: Turn = field(default_factory=Turn)
+    finished: bool = False
+
+    def log_start(self) -> None:
+        logger.info(
+            "chat", extra={"fields": {"event": "start", "session_id": self.session_id}}
+        )
+
+    def log_end(self, code: str | None = None, exc_info: bool = False) -> None:
+        """`done` sin código, `error` con código. Solo el primero cuenta."""
+        if self.finished:
+            return
+        self.finished = True
+        turn = self.turn
+        fields = {
+            "event": "done" if code is None else "error",
+            "session_id": self.session_id,
+            "code": code,
+            "latency_first_chunk_ms": _ms(self.started_at, turn.first_chunk_at),
+            "latency_total_ms": _ms(self.started_at, time.monotonic()),
+            # Sin `message_start`, el proveedor no cobró nada.
+            "tokens_in": turn.tokens_in if turn.started else None,
+            "tokens_out": turn.billed_tokens_out if turn.started else None,
+            "cache_read_tokens": turn.cache_read_tokens if turn.started else None,
+            "cache_creation_tokens": (
+                turn.cache_creation_tokens if turn.started else None
+            ),
+            "retried": turn.retried,
+        }
+        if turn.provider_status is not None:
+            fields["provider_status"] = turn.provider_status
+            fields["provider_request_id"] = turn.provider_request_id
+        if code is None:
+            level = logging.INFO
+        elif code == "internal_error":
+            level = logging.ERROR
+        else:
+            level = logging.WARNING
+        logger.log(level, "chat", extra={"fields": fields}, exc_info=exc_info)
+
+
 async def stream_provider(
     client: anthropic.AsyncAnthropic,
     system: list[dict],
@@ -174,6 +241,7 @@ async def stream_provider(
     recibido hasta ahí queda en `turn`.
     """
     for attempt in (1, 2):
+        turn.retried = attempt == 2
         try:
             async with client.messages.stream(
                 model=MODEL,
@@ -184,8 +252,10 @@ async def stream_provider(
                 async for event in stream:
                     if event.type == "message_start":
                         turn.started = True
-                        turn.tokens_in = _usage_tokens_in(event.message.usage)
+                        turn.set_usage(event.message.usage)
                     elif event.type == "text":
+                        if turn.first_chunk_at is None:
+                            turn.first_chunk_at = time.monotonic()
                         turn.parts.append(event.text)
                         yield event.text
                     elif event.type == "message_delta":
@@ -208,15 +278,12 @@ async def stream_provider(
         except httpx2.TransportError as exc:
             raise ProviderError("provider_down") from exc
         except anthropic.APIStatusError as exc:
+            turn.provider_status = exc.status_code
+            turn.provider_request_id = exc.request_id
             code = _status_error_code(exc)
             if code == "internal_error":
                 # Error de configuración propio: no se reintenta ni se reporta
                 # como caída del proveedor (Cambios al spec, 21 sep 2026).
-                logger.error(
-                    "provider_request_rejected status=%s request_id=%s",
-                    exc.status_code,
-                    exc.request_id,
-                )
                 raise ProviderError(code) from exc
             if turn.started or attempt == 2:
                 raise ProviderError(code) from exc
@@ -263,6 +330,7 @@ async def chat_events(
     history: list[dict],
     message: str,
     messages_per_session: int,
+    call: ChatCall,
 ) -> AsyncIterator[str]:
     """Eventos SSE de un intercambio (SPEC §5, §7.1).
 
@@ -270,8 +338,11 @@ async def chat_events(
     termina bien, se corta, falla el proveedor o el cliente se desconecta
     (Cambios al spec, 21 sep 2026). Sin `message_start` no se persiste ni se
     consume cupo.
+
+    Registra `done` o `error` en `call` antes de enviar el evento final. Si el
+    cliente se desconecta, lo registra quien cierra el generador.
     """
-    turn = Turn()
+    turn = call.turn
     persisted = False
 
     async def persist() -> None:
@@ -291,6 +362,7 @@ async def chat_events(
             error_code = exc.code
 
         await persist()
+        call.log_end(error_code)
         if error_code is not None:
             yield sse(
                 "error", {"code": error_code, "message": ERROR_MESSAGES[error_code]}
@@ -316,11 +388,13 @@ async def chat_events(
         # Con el stream abierto ya no hay status HTTP que cambiar: el error va
         # como evento (SPEC §7.1: el front nunca se queda en blanco). Si la
         # llamada ya se cobró, se persiste igual.
-        logger.exception("chat_stream_failed")
+        call.log_end("internal_error", exc_info=True)
         try:
             await persist()
         except Exception:
-            logger.exception("chat_persist_failed")
+            logger.exception(
+                "chat_persist_failed", extra={"fields": {"session_id": call.session_id}}
+            )
         yield sse(
             "error", {"code": "internal_error", "message": INTERNAL_ERROR_MESSAGE}
         )
