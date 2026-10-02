@@ -92,7 +92,8 @@ messages (
 Índice en `messages(created_at)` para el cálculo del presupuesto diario.
 
 No se crean tablas adicionales. El gasto del día se calcula agregando
-`tokens_in` y `tokens_out` de `messages` de las últimas 24 h.
+`tokens_in` y `tokens_out` de `messages` de las últimas 24 h. La suma se hace
+en la aplicación (ver "Cambios al spec", 29 sep 2026).
 
 ## 5. Endpoints
 
@@ -154,7 +155,7 @@ Esta sección es criterio de evaluación del proyecto. No se omite.
 | 529 / 5xx | Un reintento con espera de 2 s. Si falla, `code: "provider_down"`. |
 | Timeout (>30 s sin recibir nada del proveedor, antes o después del primer chunk) | Se corta el stream, `code: "timeout"`. Lo recibido se persiste como en la fila siguiente. |
 | Stream interrumpido a media respuesta | Se persiste lo recibido con `truncated = true` (qué cuenta como interrupción: ver "Cambios al spec", 21 sep 2026). |
-| 4xx del proveedor, salvo 429 | `code: "internal_error"` (500 si el stream aún no se abrió). Sin reintento. |
+| 4xx del proveedor, salvo 429 | `code: "internal_error"`. Sin reintento. |
 | Error de validación o sesión inexistente | 4xx con código explícito. Sin reintento. |
 
 **Regla:** el front nunca se queda en blanco. Todo error termina en un mensaje
@@ -425,3 +426,28 @@ propuestas del ejecutor.
    suelto no se puede codificar. Este chequeo corre antes que el de largo, así
    que 2000 caracteres más un NUL dan `invalid_request` y no
    `message_too_long`.
+
+**29 sep 2026 — §7.1: fallos del proveedor con el stream abierto; §4.2: suma
+del gasto de 24 h.** Sin cambio de versión: define lo que el spec dejaba
+abierto y no cambia el comportamiento implementado.
+
+1. **Stream abierto (§5, §7.1).** El stream está abierto en cuanto se envían
+   los headers HTTP de la respuesta SSE. `POST /api/chat` los envía cuando la
+   petición pasa las validaciones previas al proveedor (punto 2 de la primera
+   entrada del 14 sep), antes de llamarlo. Desde ahí, todo fallo del proveedor
+   llega como `event: error`, incluidos los 4xx salvo 429 (`internal_error`).
+   Por eso se quita "(500 si el stream aún no se abrió)" de la fila 4xx de
+   §7.1: ese caso no ocurre. Corrige el punto 2 de la entrada del 21 sep, que
+   decía "da 500 `internal_error`". Motivo: las filas 429 y 529 ya piden
+   `event: error`. Esperar a `message_start` para poder responder 500 o 503
+   las contradiría y obligaría a retener el lock de la sesión sin haber
+   respondido. Duda de alcance 4 de la auditoría del PR #16, decidida por el
+   usuario y aplicada en `ba4bb07`.
+2. **Suma del gasto (§4.2, §6).** La API de Supabase no permite funciones de
+   agregado (`PGRST123`). El gasto de 24 h se suma en la aplicación con
+   `tokens_in` y `tokens_out` de las filas `assistant` de las últimas 24 h. No
+   se crea una función SQL. El propio presupuesto acota cuántas filas hay: con
+   la cota de costo de la segunda entrada del 14 sep, punto 1, cada mensaje
+   cuesta unos $0.02–0.03, así que con un tope de, por ejemplo, $5 el demo se
+   corta hacia los 200 mensajes. Hallazgo 6 del issue #8, decidido por el
+   usuario. Aplica al paso 9.
