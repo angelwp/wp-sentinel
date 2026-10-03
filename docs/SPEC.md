@@ -90,6 +90,8 @@ messages (
 
 Índice en `sessions(ip_hash, created_at)` para el conteo de rate limit.
 Índice en `messages(created_at)` para el cálculo del presupuesto diario.
+Índice en `messages(session_id, id)` para el historial de una sesión (§5).
+Reglas de integridad y RLS: ver "Cambios al spec", 3 oct 2026.
 
 No se crean tablas adicionales. El gasto del día se calcula agregando
 `tokens_in` y `tokens_out` de `messages` de las últimas 24 h. La suma se hace
@@ -451,3 +453,71 @@ abierto y no cambia el comportamiento implementado.
    cuesta unos $0.02–0.03, así que con un tope de, por ejemplo, $5 el demo se
    corta hacia los 200 mensajes. Hallazgo 6 del issue #8, decidido por el
    usuario. Aplica al paso 9.
+
+**3 oct 2026 — §4.2: índice por sesión, reglas de integridad y RLS.** Sin
+cambio de versión: no cambia tablas, columnas ni comportamiento, y los datos
+existentes ya cumplen lo que se agrega. Motivo: el historial (§5) se busca por
+`session_id` en orden de `id` y no tenía índice; la base aceptaba filas que la
+app nunca escribe; y `supabase/schema.sql` no decía que RLS está activo, aunque
+en producción lo está. Lo pidió el usuario.
+
+1. **Índice (§4.2).** `messages(session_id, id)`: lee el historial de una
+   sesión en orden sin recorrer la tabla, y cubre las búsquedas por la llave
+   foránea.
+2. **Reglas en la base (§4.2).** Repiten en Postgres lo que la app ya valida o
+   garantiza, para que un error del código haga fallar la escritura en vez de
+   guardar un dato malo:
+   - `tokens_in` y `tokens_out` no son negativos.
+   - Fila `user`: `tokens_in` y `tokens_out` en `null`. Fila `assistant`: los
+     dos con valor (segunda entrada del 14 sep, punto 1).
+   - `truncated` solo puede ser verdadero en una fila `assistant`.
+   - Fila `user`: `content` de 1 a 2000 caracteres. `char_length` de Postgres
+     cuenta code points, igual que `len()` (entrada del 14 sep sobre la unidad
+     de caracteres). Si cambia el límite de §6, cambia también aquí.
+   - `sessions.ip_hash`: 64 caracteres hex en minúscula, el SHA-256 de §4.2.
+
+   Al 3 oct 2026, las 7 filas de `sessions` y las 70 de `messages` de
+   producción las cumplen. `scripts/verify_supabase.py` insertaba un `ip_hash`
+   que no es hex y una fila `user` con tokens en 0; ahora inserta valores que
+   las cumplen.
+3. **RLS (§4.2).** Consulta al catálogo del 3 oct 2026: RLS está activo en
+   `sessions` y `messages`, sin políticas, y `anon` y `authenticated` no tienen
+   permisos sobre ninguna de las dos. Solo entra la app, con `service_role`, que
+   ignora RLS. `schema.sql` ahora lo activa de forma explícita, para que una
+   base nueva creada desde ese archivo quede igual. Complementa la entrada del
+   12 sep sobre permisos.
+4. **`schema.sql` repetible.** Se puede volver a ejecutar sobre la base
+   existente: agrega lo que falte y vuelve a validar las reglas. Todo va en una
+   transacción, así que si alguna fila viola una regla no se aplica nada.
+
+**3 oct 2026 — §4.2, §5, §6: el intercambio se guarda en un solo insert;
+`message_count` se calcula; sin `total_tokens`.** Sin cambio de versión: no
+cambia lo que ve el usuario ni el límite de 10. **Decidido y sin implementar:**
+entra en un PR aparte. Hasta entonces, el código sigue el punto 4 de la primera
+entrada del 14 sep. Motivo: `persist_exchange` (`app/chat.py`) hace tres
+escrituras separadas: la fila `user`, la fila `assistant` y un `update` de
+`sessions`. Si falla la segunda o la tercera, queda un mensaje sin respuesta en
+el historial, o un `message_count` que no coincide con `messages`. Lo pidió el
+usuario.
+
+1. **Un solo insert (§4.2).** Las filas `user` y `assistant` de un intercambio
+   se insertan en una sola petición a la API de Supabase, que las guarda en una
+   transacción: entran las dos o ninguna. La fila `user` va primero en la
+   petición, así que su `id` debe ser menor y el historial ordenado por `id`
+   (§5) no cambia. Ese orden se verifica en el PR que lo implemente.
+2. **`message_count` calculado (§4.2, §6).** Se quita la columna
+   `sessions.message_count`. Los mensajes de una sesión son sus filas
+   `assistant`, porque cada intercambio persistido tiene exactamente una (punto
+   4 de la primera entrada del 14 sep). `messages_remaining = 10 − ese conteo`,
+   apoyado en el índice `messages(session_id, id)`. Al 3 oct 2026, las 7
+   sesiones de producción tienen `message_count` igual a su número de filas
+   `assistant`, así que nadie gana ni pierde cupo.
+3. **Sin `total_tokens` (§4.2).** Se quita `sessions.total_tokens`: la app lo
+   escribe y nada lo lee. El presupuesto (§6) suma desde `messages`, y
+   `tokens_used` de `done` sale de la llamada misma.
+
+Corrige el punto 4 de la primera entrada del 14 sep ("`message_count` y
+`total_tokens` se actualizan al persistir") y el punto 1 de la segunda ("lo que
+se suma a `sessions.total_tokens`"). Orden de despliegue: primero la app deja
+de leer y escribir las dos columnas, y después se borran en Supabase. Al revés,
+el chat falla hasta el siguiente deploy.
