@@ -3,7 +3,7 @@
 Asesor conversacional de seguridad WordPress para PYMES.
 Responde con base en un corpus propio de conocimiento operativo.
 
-**Versión del spec:** 1.1 — congelada.
+**Versión del spec:** 1.2 — congelada.
 Cualquier cambio a este documento después del primer commit de código se anota
 al final, en "Cambios al spec", con fecha y motivo.
 
@@ -71,9 +71,7 @@ No antes.
 sessions (
   id            uuid primary key,
   ip_hash       text not null,        -- SHA-256 de la IP, nunca la IP
-  created_at    timestamptz not null default now(),
-  message_count int  not null default 0,
-  total_tokens  int  not null default 0
+  created_at    timestamptz not null default now()
 )
 
 messages (
@@ -489,3 +487,36 @@ en producción lo está. Lo pidió el usuario.
 4. **`schema.sql` repetible.** Se puede volver a ejecutar sobre la base
    existente: agrega lo que falte y vuelve a validar las reglas. Todo va en una
    transacción, así que si alguna fila viola una regla no se aplica nada.
+
+**1.2 — 5 oct 2026 — §4.2, §5, §6: el intercambio se guarda en un solo insert;
+`message_count` se calcula; sin `total_tokens`.** Sube la versión porque quita
+dos columnas de §4.2. No cambia lo que ve el usuario ni el límite de 10.
+Motivo: `persist_exchange` (`app/chat.py`) hacía tres escrituras separadas: la
+fila `user`, la fila `assistant` y un `update` de `sessions`. Si fallaba la
+segunda o la tercera, quedaba un mensaje sin respuesta en el historial, o un
+`message_count` que no coincidía con `messages`. Lo pidió el usuario el 3 oct, y
+decidió que esta entrada entrara junto con el código que la implementa (duda de
+alcance 10 de la auditoría del PR #20).
+
+1. **Un solo insert (§4.2).** Las filas `user` y `assistant` de un intercambio
+   se insertan en una sola petición a la API de Supabase, que es un solo
+   `insert` de Postgres: entran las dos o ninguna. La fila `user` va primero en
+   la petición, así que recibe el `id` menor y el historial ordenado por `id`
+   (§5) no cambia.
+2. **`message_count` calculado (§4.2, §6).** Se quita la columna
+   `sessions.message_count`. Los mensajes de una sesión son sus filas
+   `assistant`, porque cada intercambio persistido tiene exactamente una (punto
+   4 de la primera entrada del 14 sep). Se cuentan antes de llamar al
+   proveedor, con el lock de la sesión tomado, y
+   `messages_remaining = 10 − ese conteo`. Al 5 oct 2026, las 8 sesiones de
+   producción tienen `message_count` igual a su número de filas `assistant`,
+   así que nadie gana ni pierde cupo.
+3. **Sin `total_tokens` (§4.2).** Se quita `sessions.total_tokens`: la app lo
+   escribía y nada lo leía. El presupuesto (§6) suma desde `messages`, y
+   `tokens_used` de `done` sale de la llamada misma.
+
+Corrige el punto 4 de la primera entrada del 14 sep ("`message_count` y
+`total_tokens` se actualizan al persistir") y el punto 1 de la segunda ("lo que
+se suma a `sessions.total_tokens`"). Orden de despliegue: primero la app deja
+de leer y escribir las dos columnas, y después se borran en Supabase con
+`schema.sql`. Al revés, el chat falla hasta el siguiente deploy.

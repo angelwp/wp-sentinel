@@ -1,17 +1,23 @@
 -- wp-sentinel — esquema (docs/SPEC.md §4.2 y "Cambios al spec")
 -- Ejecutar en el SQL editor de Supabase. Se puede volver a ejecutar sobre la
--- base existente: agrega lo que falte y vuelve a validar las reglas. Todo va en
--- una transacción: si una fila viola una regla, no se aplica nada.
+-- base existente: agrega lo que falte, quita las columnas retiradas y vuelve a
+-- validar las reglas. Todo va en una transacción: si una fila viola una regla,
+-- no se aplica nada.
 
 begin;
 
 create table if not exists sessions (
   id            uuid primary key,
   ip_hash       text not null,
-  created_at    timestamptz not null default now(),
-  message_count int  not null default 0,
-  total_tokens  int  not null default 0
+  created_at    timestamptz not null default now()
 );
+
+-- Columnas de la v1.1. message_count se calcula de messages y total_tokens no
+-- lo leía nadie (Cambios al spec, 5 oct 2026). Se aplica solo cuando el código
+-- que ya no las usa esté desplegado.
+alter table sessions
+  drop column if exists message_count,
+  drop column if exists total_tokens;
 
 create table if not exists messages (
   id            bigserial primary key,
