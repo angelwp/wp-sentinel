@@ -508,7 +508,7 @@ alcance 10 de la auditoría del PR #20).
    `assistant`, porque cada intercambio persistido tiene exactamente una (punto
    4 de la primera entrada del 14 sep). Se cuentan antes de llamar al
    proveedor, con el lock de la sesión tomado, y
-   `messages_remaining = 10 − ese conteo`. Al 5 oct 2026, las 8 sesiones de
+   `messages_remaining = 10 − ese conteo`. Al 5 oct 2026, las 7 sesiones de
    producción tienen `message_count` igual a su número de filas `assistant`,
    así que nadie gana ni pierde cupo.
 3. **Sin `total_tokens` (§4.2).** Se quita `sessions.total_tokens`: la app lo
