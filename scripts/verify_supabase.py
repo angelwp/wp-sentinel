@@ -5,6 +5,7 @@ y borra ambas filas al terminar para no dejar datos de prueba en producción.
 
 Uso: python -m scripts.verify_supabase
 """
+import hashlib
 import uuid
 
 from dotenv import load_dotenv
@@ -13,6 +14,9 @@ load_dotenv()
 
 from app.db import get_supabase  # noqa: E402
 
+# 64 hex, como el ip_hash real: lo exige sessions_ip_hash_sha256 (schema.sql).
+VERIFY_IP_HASH = hashlib.sha256(b"verify-script-test").hexdigest()
+
 
 def main() -> None:
     db = get_supabase()
@@ -20,7 +24,7 @@ def main() -> None:
     session_id = str(uuid.uuid4())
     session = (
         db.table("sessions")
-        .insert({"id": session_id, "ip_hash": "verify-script-test-hash"})
+        .insert({"id": session_id, "ip_hash": VERIFY_IP_HASH})
         .execute()
     )
     assert session.data[0]["id"] == session_id
@@ -33,8 +37,6 @@ def main() -> None:
                 "session_id": session_id,
                 "role": "user",
                 "content": "mensaje de verificación",
-                "tokens_in": 0,
-                "tokens_out": 0,
             }
         )
         .execute()

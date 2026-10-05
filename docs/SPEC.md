@@ -90,6 +90,8 @@ messages (
 
 Índice en `sessions(ip_hash, created_at)` para el conteo de rate limit.
 Índice en `messages(created_at)` para el cálculo del presupuesto diario.
+Índice en `messages(session_id, id)` para el historial de una sesión (§5).
+Reglas de integridad y RLS: ver "Cambios al spec", 3 oct 2026.
 
 No se crean tablas adicionales. El gasto del día se calcula agregando
 `tokens_in` y `tokens_out` de `messages` de las últimas 24 h. La suma se hace
@@ -451,3 +453,39 @@ abierto y no cambia el comportamiento implementado.
    cuesta unos $0.02–0.03, así que con un tope de, por ejemplo, $5 el demo se
    corta hacia los 200 mensajes. Hallazgo 6 del issue #8, decidido por el
    usuario. Aplica al paso 9.
+
+**3 oct 2026 — §4.2: índice por sesión, reglas de integridad y RLS.** Sin
+cambio de versión: no cambia tablas, columnas ni comportamiento, y los datos
+existentes ya cumplen lo que se agrega. Motivo: el historial (§5) se busca por
+`session_id` en orden de `id` y no tenía índice; la base aceptaba filas que la
+app nunca escribe; y `supabase/schema.sql` no decía que RLS está activo, aunque
+en producción lo está. Lo pidió el usuario.
+
+1. **Índice (§4.2).** `messages(session_id, id)`: lee el historial de una
+   sesión en orden sin recorrer la tabla, y cubre las búsquedas por la llave
+   foránea.
+2. **Reglas en la base (§4.2).** Repiten en Postgres lo que la app ya valida o
+   garantiza, para que un error del código haga fallar la escritura en vez de
+   guardar un dato malo:
+   - `tokens_in` y `tokens_out` no son negativos.
+   - Fila `user`: `tokens_in` y `tokens_out` en `null`. Fila `assistant`: los
+     dos con valor (segunda entrada del 14 sep, punto 1).
+   - `truncated` solo puede ser verdadero en una fila `assistant`.
+   - Fila `user`: `content` de 1 a 2000 caracteres. `char_length` de Postgres
+     cuenta code points, igual que `len()` (entrada del 14 sep sobre la unidad
+     de caracteres). Si cambia el límite de §6, cambia también aquí.
+   - `sessions.ip_hash`: 64 caracteres hex en minúscula, el SHA-256 de §4.2.
+
+   Al 3 oct 2026, las 7 filas de `sessions` y las 70 de `messages` de
+   producción las cumplen. `scripts/verify_supabase.py` insertaba un `ip_hash`
+   que no es hex y una fila `user` con tokens en 0; ahora inserta valores que
+   las cumplen.
+3. **RLS (§4.2).** Consulta al catálogo del 3 oct 2026: RLS está activo en
+   `sessions` y `messages`, sin políticas, y `anon` y `authenticated` no tienen
+   permisos sobre ninguna de las dos. Solo entra la app, con `service_role`, que
+   ignora RLS. `schema.sql` ahora lo activa de forma explícita, para que una
+   base nueva creada desde ese archivo quede igual. Complementa la entrada del
+   12 sep sobre permisos.
+4. **`schema.sql` repetible.** Se puede volver a ejecutar sobre la base
+   existente: agrega lo que falte y vuelve a validar las reglas. Todo va en una
+   transacción, así que si alguna fila viola una regla no se aplica nada.
