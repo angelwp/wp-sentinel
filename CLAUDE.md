@@ -1,6 +1,6 @@
 # wp-sentinel
 
-Spec driven development. La fuente de verdad del proyecto es [docs/SPEC.md](docs/SPEC.md) — congelado en v1.1.
+Spec driven development. La fuente de verdad del proyecto es [docs/SPEC.md](docs/SPEC.md) — congelado en v1.2.
 Cualquier cambio de alcance, arquitectura o criterios de aceptación se anota ahí, en "Cambios al spec", no en otro lado.
 
 - `docs/SPEC.md` — especificación completa: objetivo, stack, arquitectura, endpoints, límites, pruebas mínimas, variables de entorno.

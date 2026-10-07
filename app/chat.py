@@ -58,8 +58,21 @@ def build_system_prompt(corpus_text: str) -> list[dict]:
 
 
 def fetch_session(db: Client, session_id: str) -> dict | None:
-    result = db.table("sessions").select("*").eq("id", session_id).execute()
-    return result.data[0] if result.data else None
+    """La sesión con su `message_count`, que no se guarda: son sus filas
+    `assistant`, una por intercambio persistido (Cambios al spec, 5 oct 2026).
+    """
+    result = db.table("sessions").select("id").eq("id", session_id).execute()
+    if not result.data:
+        return None
+    count = (
+        db.table("messages")
+        .select("id", count="exact", head=True)
+        .eq("session_id", session_id)
+        .eq("role", "assistant")
+        .execute()
+        .count
+    )
+    return {"id": session_id, "message_count": count}
 
 
 def fetch_history(db: Client, session_id: str) -> list[dict]:
@@ -294,28 +307,32 @@ async def stream_provider(
 def persist_exchange(
     db: Client, session: dict, user_message: str, turn: Turn
 ) -> None:
+    """Guarda el intercambio en un solo insert: entran las dos filas o ninguna
+    (Cambios al spec, 5 oct 2026). La fila `user` va primero para que su `id`
+    sea menor. Las dos llevan las mismas columnas: en un insert de varias
+    filas, una columna que falta va como `null`, no con su default.
+    """
     session_id = session["id"]
     db.table("messages").insert(
-        {"session_id": session_id, "role": "user", "content": user_message}
+        [
+            {
+                "session_id": session_id,
+                "role": "user",
+                "content": user_message,
+                "tokens_in": None,
+                "tokens_out": None,
+                "truncated": False,
+            },
+            {
+                "session_id": session_id,
+                "role": "assistant",
+                "content": turn.text,
+                "tokens_in": turn.tokens_in,
+                "tokens_out": turn.billed_tokens_out,
+                "truncated": turn.truncated,
+            },
+        ]
     ).execute()
-    db.table("messages").insert(
-        {
-            "session_id": session_id,
-            "role": "assistant",
-            "content": turn.text,
-            "tokens_in": turn.tokens_in,
-            "tokens_out": turn.billed_tokens_out,
-            "truncated": turn.truncated,
-        }
-    ).execute()
-    db.table("sessions").update(
-        {
-            "message_count": session["message_count"] + 1,
-            "total_tokens": session["total_tokens"]
-            + turn.tokens_in
-            + turn.billed_tokens_out,
-        }
-    ).eq("id", session_id).execute()
 
 
 def sse(event: str, data: dict) -> str:
